@@ -6,6 +6,8 @@ from spacy.lang.en import English
 import json
 from datetime import datetime
 from dateutil.parser import parse
+import re
+from datetime import time
 
 
 def main():
@@ -14,7 +16,7 @@ def main():
 	test = trainPredict()
 
 
-	test.newQuery("i want to take a train to manchester airport from london liverpool street at 2:30 PM on sunday")
+	test.newQuery("i want to take a train to manchester airport from london liverpool street at 10:15 PM on sunday")
 
 	while True:
 		test.newQuery()
@@ -33,9 +35,11 @@ class trainPredict():
 		self.stationRuler = self.nlp.add_pipe("entity_ruler", before='ner')
 
 		wordTimePatterns = [
-			{"label": "WORDTIME", "pattern": [{"LOWER": "quarter"},{"LOWER": "to"}], 'id': 45},
-			{"label": "WORDTIME", "pattern": [{"LOWER": "quarter"},{"LOWER": "past"}], 'id': 15},	
-			{"label": "WORDTIME", "pattern": [{"LOWER": "half"},{"LOWER": "past"}], 'id': 30}
+			{"label": "WORDTIME", "pattern": [{"LOWER": "midday"}], 'id': 0},
+			{"label": "WORDTIME", "pattern": [{"LOWER": "midnight"}], 'id': 1},
+			{"label": "WORDTIME", "pattern": [{"LOWER": "quarter"},{"LOWER": "to"}], 'id': 2},
+			{"label": "WORDTIME", "pattern": [{"LOWER": "quarter"},{"LOWER": "past"}], 'id': 3},	
+			{"label": "WORDTIME", "pattern": [{"LOWER": "half"},{"LOWER": "past"}], 'id': 4},
 			]
 
 		# read the csv file
@@ -142,9 +146,10 @@ class trainPredict():
 					date = parse(doc[i + 1].text)
 			elif token.text == "at": # time
 				if doc[i+1].ent_type_ == "WORDTIME":
+
 					time = doc[i + 1].ent_id_
 				else:
-					time = doc[i + 1].ent_id_
+					time = self.toTime(doc[i + 1].text + ' ' +  doc[i + 2].text)
 
 		while toStation == None:
 
@@ -165,7 +170,20 @@ class trainPredict():
 
 
 
+	def toTime(self, timeStr):
 
+
+		match = re.search(r'(\d{1,2}):(\d{2})(?:\s?(AM|PM))?', timeStr, re.IGNORECASE)
+		if match:
+			hour, minute, period = match.groups()
+			hour = int(hour)
+			minute = int(minute)
+			if period and period.lower() == 'pm' and hour != 12:
+				hour += 12
+			elif period and period.lower() == 'am' and hour == 12:
+				hour = 0
+			foundTime = time(hour, minute)
+		return(foundTime)
 
 	
 
