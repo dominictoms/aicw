@@ -1,69 +1,51 @@
+import os
 import spacy
 from spacy.tokens import Doc
 from spacy.matcher import Matcher
-from spacy.tokens import Span
-from spacy.language import Language
+from spacy.lang.en import English
+import json
+from datetime import datetime
+from dateutil.parser import parse
 
-nlp = spacy.load("en_core_web_sm")
-matcher = Matcher(nlp.vocab)
-
-# TODO put this in the class
-stationTokens = [] 
-
-# spacy function to check for station name in query
-@Language.component("station_detector")
-def detect_stations(doc):
-
-	# TODO don't use global
-	global stationTokens
-
-	# update docs has station paraameter if station is in doc
-	doc._.has_station  = any(token.text.lower() in stationTokens for token in doc) 
-
-	# send the doc back
-	return doc 
 
 def main():
 
 	# create a prediction object
 	test = trainPredict()
 
-	# test on a station we know exists
-	test.newQuery("London Liverpool Street Rail Station")
 
-	# prompt user to enter station names forever
+	test.newQuery("i want to take a train to manchester airport from london liverpool street at 2:30 PM on sunday")
+
 	while True:
-		test.newQuery(input('enter station: '))
-		
+		test.newQuery()
 
 class trainPredict():
-
 
 	def __init__(self):
 
 		# key tiploc : {name longname alpha3}
-		self.stations = {}
+		self.days = {}
+
+		self.stationPatterns = []
+
+		self.nlp = spacy.load("en_core_web_sm")
+
+		self.stationRuler = self.nlp.add_pipe("entity_ruler", before='ner')
 
 		# read the csv file
 		self.loadFromCsv()
 
-		# TODO don't use global
-		global stationTokens
+		#self.stationRuler.add_patterns([{"label": "domLovesCock", "pattern": "manchester"}])
+		self.stationRuler.add_patterns(self.stationPatterns)
+		#self.stationRuler.add_patterns([{"label": "domLovesFatBigBulgingVeinyCocks", "pattern": [{"LOWER": "manchester"}, {"LOWER": "airport"}]}])
 
-		# Add custom attribute to Doc using extension attribute
-		Doc.set_extension('has_station', default=False)
-
-		# Add the custom component to the spaCy pipeline using the string name
-		nlp.add_pipe("station_detector", last=True)
 		
 		
 	def loadFromCsv(self):
 
-		# TODO don't use global
-		global stationTokens
-
 		# open the csv file containing every station
-		with open("./stations.csv", 'r') as file:
+		script_dir = os.path.dirname(os.path.abspath(__file__))
+		with open(os.path.join(script_dir, "stations.csv"), 'r') as file:
 
 			# get all the lines in the csv file
 			lines = file.readlines()
@@ -81,25 +63,102 @@ class trainPredict():
 				namesSplit = line.split(',')
 
 				# add station to dict, use the tiploc as the key
-				self.stations[namesSplit[3]] = {
-					'name': namesSplit[0],
-					'longname': namesSplit[1],
-					'alpha3': namesSplit[4]
-				}
+				name = namesSplit[0]
+				longname = namesSplit[1]
+				alpha3 =  namesSplit[4]
+				tiploc =namesSplit[3]
 
-				# TODO use dicts and not a massive list
-				stationTokens.append(namesSplit[1])
+				# add longname
+				longname_patterns = []
+				for word in longname.split():
+					longname_patterns.append({"LOWER": word.lower()})
+
+				self.stationPatterns.append(
+					{"label": "STATION", "pattern": longname_patterns, 'id': tiploc}
+				)
+
+				if len(longname_patterns) >= 3:
+
+					longname_patterns = longname_patterns[:-2]
+
+					if longname_patterns[0] == 'London':
+						longname_patterns.pop(0)
+
+					self.stationPatterns.append(
+						{"label": "STATION", "pattern": longname_patterns, 'id': tiploc}
+					)
+
+
+				# add name
+				name_patterns = []
+				for word in name.split():
+					name_patterns.append({"LOWER": word.lower()})
+
+				self.stationPatterns.append(
+					{"label": "STATION", "pattern": name_patterns, 'id': tiploc}
+				)
+
+				while "LONDON" in name_patterns:
+					name_patterns.remove("LONDON")
+
+				self.stationPatterns.append(
+					{"label": "STATION", "pattern": name_patterns, 'id': tiploc}
+				)
+
 
 	# run a new query
-	def newQuery(self, query):
+	def newQuery(self, query  = None):
 
+		if query == None:
+			query = input("Hello! How can I help?\n> ")
+
+
+		current_datetime = datetime.now()
+		date = current_datetime.date() # will need too check with user if this is right
+		time = current_datetime.time()
+		toStation = None # location defult like time
+		fromStation = None
+		
 		# put query through nlp pipeline
-		doc = nlp(query)
+		doc = self.nlp(query)
+		for i, token in enumerate(doc):
 
-		if doc._.has_station:
-			print("station found")
-		else:
-			print("no station found")
+			
+			if token.text == "to":
+				if doc[i+1].ent_type_:
+					toStation = doc[i + 1].ent_id_
+			elif token.text == "from":
+				if doc[i+1].ent_type_:
+					fromStation = doc[i + 1].ent_id_
+			elif token.text == "on": # date
+				if doc[i+1].ent_type_:
+					date = parse(doc[i + 1].text)
+			elif token.text == "at": # time
+				if doc[i+1].ent_type_:
+					time = doc[i + 1].ent_id_
+
+		while toStation == None:
+
+			if fromStation != None:
+				query = input(f"I see you want to travel from {fromStation}, where are you going to\n> ")
+
+			else:
+				query = input(f"Where are you travelling to?\n> ")
+
+			doc = self.nlp(query)
+
+			for token in doc:
+				if token.ent_type_:
+					toStation = token.ent_id_
+
+
+		print(f'toStation: {toStation}, fromStation: {fromStation}, date: {date}, time:, {time}')
+
+
+
+
+
+	
 
 
 if __name__ == '__main__':
