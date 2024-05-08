@@ -1,13 +1,22 @@
 import os
+import json
+import re
+import math
+
 import spacy
 from spacy.tokens import Doc
 from spacy.matcher import Matcher
 from spacy.lang.en import English
-import json
-from datetime import datetime
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+
+from datetime import time, datetime, timedelta
+
 from dateutil.parser import parse
-import re
-from datetime import time
 
 
 def main():
@@ -16,10 +25,9 @@ def main():
 	test = trainPredict()
 
 
-	test.newQuery("i want to take a train to manchester airport from london liverpool street at 10:15 PM on sunday")
+	#test.newQuery("i want to take a train to manchester airport from london liverpool street at 10:15 PM on sunday")
 
-	while True:
-		test.newQuery()
+	test.newQuery()
 
 class trainPredict():
 
@@ -151,6 +159,7 @@ class trainPredict():
 				else:
 					time = self.toTime(doc[i + 1].text + ' ' +  doc[i + 2].text)
 
+		# get a to station
 		while toStation == None:
 
 			if fromStation != None:
@@ -165,8 +174,46 @@ class trainPredict():
 				if token.ent_type_:
 					toStation = token.ent_id_
 
+		# get a from station
+		while fromStation == None:
 
-		print(f'toStation: {toStation}, fromStation: {fromStation}, date: {date}, time:, {time}')
+			if toStation != None:
+				query = input(f"I see you want to travel to {toStation}, where are you travelling from?\n> ")
+
+			else:
+				query = input(f"Where are you travelling from?\n> ")
+
+			doc = self.nlp(query)
+
+			for token in doc:
+				if token.ent_type_:
+					fromStation = token.ent_id_
+
+
+		# format the date for the web scraping
+		formatted_date = date.strftime("%d %m %y")
+		day, month, year = formatted_date.split()
+
+		# format the time for the web scraping
+		formatted_time = time.strftime("%H %M")
+		hour, minute = formatted_time.split()
+
+		# round minute up to the next 15 minutes
+		minute = str(math.ceil(int(minute) / 15) * 15)
+
+
+		url = getUrl(fromStation, toStation, day, month, year, hour, minute)
+
+
+		price = getPrice(url)
+		
+		if price != None:
+			print(f"The cheapest ticket is {price}!")
+			print(f"You can get a ticket here: {url}")
+
+		else:
+			print("Sorry we fucked up")
+
 
 
 
@@ -185,6 +232,34 @@ class trainPredict():
 			foundTime = time(hour, minute)
 		return(foundTime)
 
+
+
+def getPrice(url):
+
+	# configure chromium
+	chrome_options = Options()
+	chrome_options.add_argument("--headless")
+	driver = webdriver.Chrome(options=chrome_options)
+
+	# load our url
+	driver.get(url)
+
+	# attempt to get price
+	try:
+
+		# get the box containing the price
+		price_box = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "jp-class-jp-results-standard")))
+
+		# return the price
+		return re.search(r"£\d+(\.\d+)?", price_box.get_attribute("aria-label")).group()
+
+	# something fucked up
+	except:
+		return None
+
+# get the url from national rail
+def getUrl(origin, destination, date, month, year, hour, minute):
+	return f'https://www.nationalrail.co.uk/journey-planner/?type=single&origin={origin}&destination={destination}&leavingType=departing&leavingDate={date}{month}{year}&leavingHour={hour}&leavingMin={minute}&adults=1&extraTime=0#O'
 	
 
 
