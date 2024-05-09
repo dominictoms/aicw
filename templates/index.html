@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flask-SocketIO Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+	<style>
+	  .image-container {
+		width: 200px; /* Set the width of the container */
+		height: 200px; /* Set the height of the container */
+		overflow: hidden; /* Hide overflowing parts of the image */
+	  }
+
+	  .image-container img {
+		width: 100%; /* Make the image fill the container */
+		height: 100%; /* Make the image fill the container */
+		object-fit: cover; /* Crop the image to cover the container */
+	  }
+</style>
+</head>
+<body>
+	<div class="image-container">
+		<img src="https://static9.depositphotos.com/1325771/1217/i/450/depositphotos_12172425-Female-customer-support-operator.jpg">
+	</div>
+	<h1>trainrunner</h1>
+	<p>you can run all of your trains on us</p>
+    <div id="message-container"></div>
+    <input type="text" id="message-input">
+    <button id="send-btn">Send</button>
+    
+    <script>
+        var socket = io.connect('http://' + document.domain + ':' + location.port);
+
+        socket.on('message', function(data) {
+            $('#message-container').append($('<div>').text(data));
+        });
+
+        $('#send-btn').click(function() {
+            var message = $('#message-input').val();
+            socket.emit('message', message);
+            $('#message-input').val('');
+        });
+    </script>
+</body>
+</html>
+

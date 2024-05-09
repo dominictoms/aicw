@@ -1,4 +1,11 @@
 import os
+import io
+import json
+import re
+import logging
+import math
+import sys
+
 import spacy
 from spacy.tokens import Doc, Token
 from spacy.matcher import Matcher
@@ -10,6 +17,50 @@ from dateutil.parser import parse
 import re
 from word2number import w2n
 
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+
+from datetime import time, datetime, timedelta
+
+from dateutil.parser import parse
+
+from flask import Flask, render_template
+from flask_socketio import SocketIO, emit
+from threading import Thread
+
+# hacky fix to remove flask opening message
+cli = sys.modules['flask.cli']
+cli.show_server_banner = lambda *x: None
+
+# make flask and socketio
+app = Flask(__name__)
+app.logger.disabled = True
+socketio = SocketIO(app, logger=False)
+
+# don't spam console with this stuff
+logging.getLogger('socketio').setLevel(logging.ERROR)
+logging.getLogger('engineio').setLevel(logging.ERROR)
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+history = []
+
+# web server stuff as globals
+@app.route('/')
+def index():
+	return render_template('index.html')
+
+@socketio.on('connect')
+def handle_connection():
+	for message in history:
+		socketio.emit('message', message)
+
+@socketio.on('message')
+def handle_message(message):
+	trainPredict.webInput(message)
+	trainPredict.newQuery(message)
 
 def main():
 	testData = [
@@ -31,8 +82,8 @@ def main():
 	"get me to diss! i'm in norwich right now",
 	"get me away from norwich, i want to be in diss"
 	]
-	# create a prediction object
-	trainPredict = TrainPredict()
+
+	print('here')
 
 	
 	#trainPredict.new_query("i want to take a train to manchester airport from diss at 10:15 PM on sunday")
@@ -42,8 +93,6 @@ def main():
 
 		print('\n----------------------------------------------------------\n')
 	
-	while True:
-		test.new_query()
 
 @Language.component("info_semantic")
 def info_semantic(doc):
@@ -123,6 +172,8 @@ class TrainPredict:
 			
         }
         
+		print('here?')
+
         # Preparing a matcher for semantic similarity
 		self.prepare_info_tokens()
 
@@ -336,18 +387,8 @@ class TrainPredict:
 		print(query)
 		print(f'To: {to_station}, From: {from_station}, Date: {journey_date}, Time: {journey_time}, child {childTickets}, adult {adultTickets}, return {certain[6]}')
 		return(True)
-		'''
- 
-		while to_station is None:
-			query = input("Where are you travelling to?\n> ")
-			doc = self.nlp(query)
-			for token in doc:
-				if token.ent_type_ == "STATION":
-					to_station = token.ent_id_ or token.text
-		'''
-					
-		#print(query)
-		#print(f'To: {to_station}, From: {from_station}, Date: {journey_date}, Time: {journey_time}')
+
+				
 
 	def to_time(self, time_str):
 
@@ -360,8 +401,48 @@ class TrainPredict:
 				hour += 12
 			elif period and period.lower() == 'am' and hour == 12:
 				hour = 0
-			return time(hour, minute)
-		return None
+			foundTime = time(hour, minute)
+		return(foundTime)
 
-if __name__ == '__main__':
-	main()
+
+
+	def getPrice(self, url):
+
+		# configure chromium
+		chrome_options = Options()
+		chrome_options.add_argument("--headless")
+		driver = webdriver.Chrome(options=chrome_options)
+
+		# load our url
+		driver.get(url)
+
+		# attempt to get price
+		try:
+
+			# get the box containing the price
+			price_box = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "jp-class-jp-results-standard")))
+
+			# return the price
+			return re.search(r"£\d+(\.\d+)?", price_box.get_attribute("aria-label")).group()
+
+		# something fucked up
+		except:
+			return None
+
+	# get the url from national rail
+	def getUrl(self, origin, destination, date, month, year, hour, minute):
+		return f'https://www.nationalrail.co.uk/journey-planner/?type=single&origin={origin}&destination={destination}&leavingType=departing&leavingDate={date}{month}{year}&leavingHour={hour}&leavingMin={minute}&adults=1&extraTime=0#O'
+		
+# create a prediction object
+trainPredict = TrainPredict()
+
+if __name__ == "__main__":
+
+	print('here!')
+
+	# run the chatbot in the terminal
+	terminal_thread = Thread(target=main)
+	terminal_thread.start()
+
+	# run the chatbot in the browser
+	socketio.run(app, port=5001)
