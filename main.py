@@ -1,7 +1,10 @@
 import os
+import io
 import json
 import re
+import logging
 import math
+import sys
 
 import spacy
 from spacy.tokens import Doc
@@ -18,16 +21,45 @@ from datetime import time, datetime, timedelta
 
 from dateutil.parser import parse
 
+from flask import Flask, render_template
+from flask_socketio import SocketIO, emit
+from threading import Thread
+
+# hacky fix to remove flask opening message
+cli = sys.modules['flask.cli']
+cli.show_server_banner = lambda *x: None
+
+# make flask and socketio
+app = Flask(__name__)
+app.logger.disabled = True
+socketio = SocketIO(app, logger=False)
+
+# don't spam console with this stuff
+logging.getLogger('socketio').setLevel(logging.ERROR)
+logging.getLogger('engineio').setLevel(logging.ERROR)
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+history = []
+
+# web server stuff as globals
+@app.route('/')
+def index():
+	return render_template('index.html')
+
+@socketio.on('connect')
+def handle_connection():
+	for message in history:
+		socketio.emit('message', message)
+
+@socketio.on('message')
+def handle_message(message):
+	trainPredict.webInput(message)
+	trainPredict.newQuery(message)
 
 def main():
 
-	# create a prediction object
-	test = trainPredict()
-
-
-	#test.newQuery("i want to take a train to manchester airport from london liverpool street at 10:15 PM on sunday")
-
-	test.newQuery()
+	# run the query
+	trainPredict.newQuery()
 
 class trainPredict():
 
@@ -58,8 +90,30 @@ class trainPredict():
 		self.stationRuler.add_patterns(wordTimePatterns)
 		#self.stationRuler.add_patterns([{"label": "domLovesFatBigBulgingVeinyCocks", "pattern": [{"LOWER": "manchester"}, {"LOWER": "airport"}]}])
 
-		
-		
+		# get defaults
+		current_datetime = datetime.now()
+		self.date = current_datetime.date() # will need too check with user if this is right
+		self.time = current_datetime.time()
+		self.toStation = None # location defult like time
+		self.fromStation = None
+
+
+	def sendMessage(self, message):
+		print(f"TrainRunner: {message} ")
+		socketio.emit('message', f"TrainRunner: {message}")
+		history.append("TrainRunner: " + message)
+
+	def userInput(self):
+		message = input()
+		socketio.emit('message', f"User: {message}")
+		history.append("User: " + message)
+		return message
+
+	def webInput(self, message):
+		print(f"User: {message} ")
+		socketio.emit('message', f"User: {message}")
+		history.append("User: " + message)
+
 	def loadFromCsv(self):
 
 		# open the csv file containing every station
@@ -128,15 +182,34 @@ class trainPredict():
 	# run a new query
 	def newQuery(self, query  = None):
 
+		webRequest = False
+
+		message = "Hello! How can I help?"
+
+
+		if self.toStation != None:
+			message = f"I see you want to travel to {self.toStation}, which station would you like to go from?"
+
+		if self.fromStation != None:
+			message = f"I see you want to travel from {self.fromStation}, where is your final destination?"
+
+		if self.fromStation != None and self.toStation != None:
+			message = f"I see you want to travel to {self.toStation} from {self.fromStation}, finding your ticket now!"
+
+		self.sendMessage(message)
+
 		if query == None:
-			query = input("Hello! How can I help?\n> ")
+			query = self.userInput()
+
+		else:
+			webRequest = True
+
+		#if self.toStation != None and self.fromStation != None:
+		#	message = f"I see you want to travel to {self.toStation} from {self.fromStation}, finding your ticket now!"
 
 
-		current_datetime = datetime.now()
-		date = current_datetime.date() # will need too check with user if this is right
-		time = current_datetime.time()
-		toStation = None # location defult like time
-		fromStation = None
+
+
 		
 		# put query through nlp pipeline
 		doc = self.nlp(query)
@@ -145,74 +218,92 @@ class trainPredict():
 			
 			if token.text == "to":
 				if doc[i+1].ent_type_:
-					toStation = doc[i + 1].ent_id_
+					self.toStation = doc[i + 1].ent_id_
 			elif token.text == "from":
 				if doc[i+1].ent_type_:
-					fromStation = doc[i + 1].ent_id_
-			elif token.text == "on": # date
+					self.fromStation = doc[i + 1].ent_id_
+			elif token.text == "on":
 				if doc[i+1].ent_type_:
-					date = parse(doc[i + 1].text)
-			elif token.text == "at": # time
+					self.date = parse(doc[i + 1].text)
+			elif token.text == "at":
 				if doc[i+1].ent_type_ == "WORDTIME":
 
-					time = doc[i + 1].ent_id_
+					self.time = doc[i + 1].ent_id_
 				else:
-					time = self.toTime(doc[i + 1].text + ' ' +  doc[i + 2].text)
+					self.time = self.toTime(doc[i + 1].text + ' ' +	doc[i + 2].text)
 
+		'''
 		# get a to station
-		while toStation == None:
+		while self.toStation == None:
 
-			if fromStation != None:
-				query = input(f"I see you want to travel from {fromStation}, where are you going to\n> ")
+			if self.fromStation != None:
+				self.sendMessage(f"I see you want to travel from {self.fromStation}, where are you going to")
+				query = self.userInput()
 
 			else:
-				query = input(f"Where are you travelling to?\n> ")
+				self.sendMessage("Where are you travelling to?")
+				query = self.userInput()
 
 			doc = self.nlp(query)
 
 			for token in doc:
 				if token.ent_type_:
-					toStation = token.ent_id_
+					self.toStation = token.ent_id_
 
 		# get a from station
-		while fromStation == None:
+		while self.fromStation == None:
 
-			if toStation != None:
-				query = input(f"I see you want to travel to {toStation}, where are you travelling from?\n> ")
+			if self.toStation != None:
+				self.sendMessage(f"I see you want to travel to {self.toStation}, where are you travelling from?")
+				query = self.userInput()
 
 			else:
-				query = input(f"Where are you travelling from?\n> ")
+				self.sendMessage("Where are you travelling from?")
+				query = self.userInput()
 
 			doc = self.nlp(query)
 
 			for token in doc:
 				if token.ent_type_:
-					fromStation = token.ent_id_
+					self.fromStation = token.ent_id_
+		'''
+
+		if self.toStation != None and self.fromStation != None:
 
 
-		# format the date for the web scraping
-		formatted_date = date.strftime("%d %m %y")
-		day, month, year = formatted_date.split()
+			# format the date for the web scraping
+			formatted_date = self.date.strftime("%d %m %y")
+			day, month, year = formatted_date.split()
 
-		# format the time for the web scraping
-		formatted_time = time.strftime("%H %M")
-		hour, minute = formatted_time.split()
+			# format the time for the web scraping
+			formatted_time = self.time.strftime("%H %M")
+			hour, minute = formatted_time.split()
 
-		# round minute up to the next 15 minutes
-		minute = str(math.ceil(int(minute) / 15) * 15)
+			# round minute up to the next 15 minutes
+			minute = str(math.ceil(int(minute) / 15) * 15)
+
+			if int(minute) >= 60:
+				minute = '00'
+				hour = str(int(hour) + 1)
+
+				if len(hour) == 1:
+					hour = '0' + hour
 
 
-		url = getUrl(fromStation, toStation, day, month, year, hour, minute)
+			url = self.getUrl(self.fromStation, self.toStation, day, month, year, hour, minute)
 
 
-		price = getPrice(url)
-		
-		if price != None:
-			print(f"The cheapest ticket is {price}!")
-			print(f"You can get a ticket here: {url}")
+			price = self.getPrice(url)
+			
+			if price != None:
+				self.sendMessage(f"The cheapest ticket is {price}!")
+				self.sendMessage(f"You can get a ticket here: {url}")
 
-		else:
-			print("Sorry we fucked up")
+			else:
+				self.sendMessage(f"You can get a ticket here: {url}")
+
+		elif webRequest == False:
+			self.newQuery()
 
 
 
@@ -234,34 +325,41 @@ class trainPredict():
 
 
 
-def getPrice(url):
+	def getPrice(self, url):
 
-	# configure chromium
-	chrome_options = Options()
-	chrome_options.add_argument("--headless")
-	driver = webdriver.Chrome(options=chrome_options)
+		# configure chromium
+		chrome_options = Options()
+		chrome_options.add_argument("--headless")
+		driver = webdriver.Chrome(options=chrome_options)
 
-	# load our url
-	driver.get(url)
+		# load our url
+		driver.get(url)
 
-	# attempt to get price
-	try:
+		# attempt to get price
+		try:
 
-		# get the box containing the price
-		price_box = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "jp-class-jp-results-standard")))
+			# get the box containing the price
+			price_box = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "jp-class-jp-results-standard")))
 
-		# return the price
-		return re.search(r"£\d+(\.\d+)?", price_box.get_attribute("aria-label")).group()
+			# return the price
+			return re.search(r"£\d+(\.\d+)?", price_box.get_attribute("aria-label")).group()
 
-	# something fucked up
-	except:
-		return None
+		# something fucked up
+		except:
+			return None
 
-# get the url from national rail
-def getUrl(origin, destination, date, month, year, hour, minute):
-	return f'https://www.nationalrail.co.uk/journey-planner/?type=single&origin={origin}&destination={destination}&leavingType=departing&leavingDate={date}{month}{year}&leavingHour={hour}&leavingMin={minute}&adults=1&extraTime=0#O'
-	
+	# get the url from national rail
+	def getUrl(self, origin, destination, date, month, year, hour, minute):
+		return f'https://www.nationalrail.co.uk/journey-planner/?type=single&origin={origin}&destination={destination}&leavingType=departing&leavingDate={date}{month}{year}&leavingHour={hour}&leavingMin={minute}&adults=1&extraTime=0#O'
+		
+# create a prediction object
+trainPredict = trainPredict()
 
+if __name__ == "__main__":
 
-if __name__ == '__main__':
-	main()
+	# run the chatbot in the terminal
+	terminal_thread = Thread(target=main)
+	terminal_thread.start()
+
+	# run the chatbot in the browser
+	socketio.run(app, port=5001)
