@@ -1,3 +1,3 @@
 # ai coursework
 
-dom n pike route trains
+dom n pike run trains
