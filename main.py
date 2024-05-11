@@ -46,9 +46,6 @@ logging.getLogger("socketio").setLevel(logging.ERROR)
 logging.getLogger("engineio").setLevel(logging.ERROR)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-# global list of conversation history, for web server
-history = []
-
 # TODO feels wrong to have this global
 trainPredict = None
 
@@ -57,14 +54,39 @@ trainPredict = None
 def index():
 	return render_template("index.html")
 
-# populate ui with chat history on connection
+# when the ui is loaded
 @socketio.on("connect")
 def handleConnection():
-	for message in history:
-		socketio.emit("message", message)
+
+	# populate chat with history
+	for message in trainPredict.history:
+		if message.startswith("User:"):
+			socketio.emit("userMessage", message)
+		else:
+			socketio.emit("botMessage", message)
+
+	# disable message input if completed
+	if trainPredict.completed:
+		socketio.emit("end")
+
+# for resetting the chat
+@socketio.on("reset")
+def handleReset():
+
+	# clear history
+	trainPredict.history = []
+
+	# unset completed tag
+	trainPredict.completed = False
+
+	# default setup
+	trainPredict.setup()
+
+	# say hi
+	trainPredict.sendGreeting()
 
 # when the user sends a message from the gui 
-@socketio.on("message")
+@socketio.on("userMessage")
 def handleMessage(message):
 	trainPredict.webInput(message)
 	trainPredict.newQuery(message)
@@ -110,8 +132,17 @@ class TrainPredict:
 		else:
 			TrainPredict._instance = self
 
+		# list of message history
+		self.history = []
+
+		# what we know so far
+		self.setup()
+
+		# is the chat finished
+		self.completed = False
+
 		# let her send the opening line ;)
-		self.chatbotSpeech("Welcome to Trainrunner! How may I help xx")
+		self.sendGreeting()
 		
 		# set up spacy
 		self.nlp = spacy.load("en_core_web_md")
@@ -203,6 +234,19 @@ class TrainPredict:
 			word: self.nlp(word)[0] for word in self.infoWords if self.nlp(word)[0].has_vector
 		}
 
+	# make her say hi :)
+	def sendGreeting(self):
+		self.chatbotSpeech("Welcome to TrainRunner! How may I help xx")
+
+	def setup(self):
+		self.certain = [None, None, None, None, None, None, None]
+		self.toStation = None
+		self.fromStation = None
+		self.journeyDate = None
+		self.journeyTime = None
+		self.adultTickets = None
+		self.childTickets = None
+
 	# load all the stations from the csv file
 	def loadStations(self):
 		
@@ -255,11 +299,21 @@ class TrainPredict:
 		message = input()
 		message = f"User: {message}"
 
+		# stop messages once it's done
+		if self.completed:
+			return
+
+		# clear user input
+		print('\033[F\033[K', end='', flush=True)
+
+		# print the users input		
+		print(message)
+
 		# output to gui (will stay in cli from input)
-		socketio.emit("message", f"User: {message}")
+		socketio.emit("userMessage", message)
 
 		# add to history
-		history.append("User: " + message)
+		self.history.append(message)
 
 		# send it back
 		return message
@@ -272,10 +326,10 @@ class TrainPredict:
 
 		# output to cli and gui
 		print(message)
-		socketio.emit("message", message)
+		socketio.emit("userMessage", message)
 
 		# add to history
-		history.append(message)
+		self.history.append(message)
 
 	# chatbot messages user
 	def chatbotSpeech(self, message):
@@ -285,10 +339,10 @@ class TrainPredict:
 
 		# output to cli and gui
 		print(f"{message} ")
-		socketio.emit("message", message)
+		socketio.emit("botMessage", message)
 
 		# add to history
-		history.append(message)
+		self.history.append(message)
 	
 	# function to start a new query
 	def newQuery(self, query = None):
@@ -313,9 +367,6 @@ class TrainPredict:
 		# nlp the doc
 		doc = self.nlp(query)
 
-		# list of which variables we're certain on
-		certain = [None,None,None,None,None,None,None]
-		toStation, fromStation, journeyDate, journeyTime, adultTickets, childTickets = None, None, None, None, None, None
 
 		# this works wonders but i cannot comprehend what's happening here
 		skip = False
@@ -345,49 +396,49 @@ class TrainPredict:
 						isNum = "NUM" if doc[dataPos].like_num else "NOTNUM"
 						if dataPos < len(doc) and (doc[dataPos].ent_type_ == meaning[2] or isNum == meaning[2] or 0== meaning[1]): 
 							if len(meaning) == 4:
-								certain[6] = True
+								self.certain[6] = True
 							if meaning[0] == "from":
 								if token._.identical:
-									certain[0] = True
+									self.certain[0] = True
 								else:
-									certain[0] = False
-								fromStation = doc[dataPos].ent_id_ 
+									self.certain[0] = False
+								self.fromStation = doc[dataPos].ent_id_ 
 								break
 							elif meaning[0] == "to":
 								if token._.identical:
-									certain[1] = True
+									self.certain[1] = True
 								else:
-									certain[1] = False
-								toStation = doc[dataPos].ent_id_
+									self.certain[1] = False
+								self.toStation = doc[dataPos].ent_id_
 								break
 							elif meaning[0] == "on":
 								if token._.identical:
-									certain[2] = True
+									self.certain[2] = True
 								else:
-									certain[2] = False
-								journeyDate = parse(doc[dataPos].text).date()
+									self.certain[2] = False
+								self.journeyDate = parse(doc[dataPos].text).date()
 								break
 							elif meaning[0] == "by":
 								if token._.identical:
-									certain[3] = True
+									self.certain[3] = True
 								else:
-									certain[3] = False
-								journeyTime = self.toTime(doc[dataPos].text)
+									self.certain[3] = False
+								self.journeyTime = self.toTime(doc[dataPos].text)
 								break
 							
 							elif meaning[0] == "adult":
 								if token.text == "adult" and token._.identical:
-									certain[4] = True
+									self.certain[4] = True
 								else:
-									certain[4] = False
-								adultTickets = w2n.word_to_num(doc[dataPos].text)
+									self.certain[4] = False
+								self.adultTickets = w2n.word_to_num(doc[dataPos].text)
 								break
 							elif meaning[0] == "child":
 								if	token._.identical:
-									certain[5] = True
+									self.certain[5] = True
 								else:
-									certain[5] = False
-								childTickets = w2n.word_to_num(doc[dataPos].text)
+									self.certain[5] = False
+								self.childTickets = w2n.word_to_num(doc[dataPos].text)
 								break
 
 			else:
@@ -395,46 +446,48 @@ class TrainPredict:
 
 		# we're currently assuming if no date is provided, do it right now
 		currentDatetime = datetime.now()
-		if journeyDate == None:
-			journeyTime = currentDatetime.time()
-			certain[3] == False
+		if self.journeyDate == None:
+			self.journeyTime = currentDatetime.time()
+			self.certain[3] == False
 
-		if journeyDate == None:
-			journeyDate = currentDatetime.date() 
-			certain[3] == False
-
-		# send it all back
-		return certain, toStation, fromStation, journeyDate, journeyTime, adultTickets, childTickets
+		if self.journeyDate == None:
+			self.journeyDate = currentDatetime.date() 
+			self.certain[3] == False
 
 	# generate the response to the users query	
 	def output(self, query):
+
+		# don't do anything here if we're done
+		if self.completed:
+			return
 		
-		# we have a lot of variables
-		certain, toStation, fromStation, journeyDate, journeyTime, adultTickets, childTickets = self.processQuery(query)
+		# process the query!
+		self.processQuery(query)
+
 		# strings to store outputs
 		uncertain = ""
 		unknown = ""
 		output = ""
 
 		# meow
-		for i, cat in enumerate(certain):
+		for i, cat in enumerate(self.certain):
 
 			# if we're uncertain
 			if cat == False:
 				if i == 0:
-					uncertain += f"from {fromStation} "
+					uncertain += f"from {self.fromStation} "
 				elif i == 1:
-					uncertain += f"to {toStation} "
+					uncertain += f"to {self.toStation} "
 				elif i == 2:
-					uncertain += f"on {journeyDate} "
+					uncertain += f"on {self.journeyDate} "
 				elif i == 3:
-					uncertain += f"by {journeyTime} "
+					uncertain += f"by {self.journeyTime} "
 				elif i == 4:
-					uncertain += f"for {adultTickets} adult(s) "
+					uncertain += f"for {self.adultTickets} adult(s) "
 				elif i == 5:
-					uncertain += f"for {childTickets} child(ren) "
+					uncertain += f"for {self.childTickets} child(ren) "
 				elif i == 6:
-					returnStr = "youd like to return " if certain[6] else "you would not like to return"
+					returnStr = "youd like to return " if self.certain[6] else "you would not like to return"
 					uncertain += f"and {returnStr}"
 
 			# if we really have no idea
@@ -471,11 +524,11 @@ class TrainPredict:
 		if output == "":
 
 			# format the date for the web scraping
-			formattedDate = journeyDate.strftime("%d %m %y")
+			formattedDate = self.journeyDate.strftime("%d %m %y")
 			day, month, year = formattedDate.split()
 
 			# format the time for the web scraping
-			formattedTime = journeyTime.strftime("%H %M")
+			formattedTime = self.journeyTime.strftime("%H %M")
 			hour, minute = formattedTime.split()
 
 			# round minute up to the next 15 minutes
@@ -490,7 +543,7 @@ class TrainPredict:
 					hour = "0" + hour
 
 			# get the url for the journey from all of our data
-			url = self.getUrl(fromStation, toStation, day, month, year, hour, minute)
+			url = self.getUrl(self.fromStation, self.toStation, day, month, year, hour, minute)
 
 			# use web scraping to grab the price from that url
 			price = self.getPrice(url)
@@ -501,6 +554,10 @@ class TrainPredict:
 
 			# add the url to the output
 			output += f"You can get a ticket here: {url}"
+
+			# disable the chatbot
+			socketio.emit("end")
+			self.completed = True
 		
 		# we've figured out what to say, now say it
 		self.chatbotSpeech(output)

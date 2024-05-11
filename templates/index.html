@@ -1,83 +1,165 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flask-SocketIO Chat</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <style>
-      .image-container {
-        width: 200px; /* Set the width of the container */
-        height: 200px; /* Set the height of the container */
-        overflow: hidden; /* Hide overflowing parts of the image */
-      }
+	<!-- html boilerplate stuff -->
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>TrainRunner</title>
 
-      .image-container img {
-        width: 100%; /* Make the image fill the container */
-        height: 100%; /* Make the image fill the container */
-        object-fit: cover; /* Crop the image to cover the container */
-      }
-    </style>
+	<!-- load up socket.io -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+
+	<!-- make it all look pretty -->
+	<style>
+
+		.image-container img {
+			width: 200px;
+			height: 200px;
+			overflow: hidden;
+			object-fit: cover;
+		}
+
+		#title {
+			margin-bottom: 0;
+		}
+		#subtitle {
+			margin-top: 0;
+		}
+	</style>
 </head>
 <body>
-    <div class="image-container">
-        <img src="https://static9.depositphotos.com/1325771/1217/i/450/depositphotos_12172425-Fema    le-customer-support-operator.jpg">
-    </div>
-    <h1>trainrunner</h1>
-    <p>you can run all of your trains on us</p>
-    <div id="message-container"></div>
-    <input type="text" id="message-input">
-    <button id="send-btn">Send</button>
 
+	<!-- image of friendly tech support worker -->
+	<div class="image-container">
+		<img src="https://static9.depositphotos.com/1325771/1217/i/450/depositphotos_12172425-Female-customer-support-operator.jpg">
+	</div>
+
+	<!-- title and subheading -->
+	<h1 id="title">TrainRunner</h1>
+	<p id="subtitle">You can run all of your trains on us ❤️</p>
+
+	<!-- div for the messages to go in -->
+	<div id="message-container"></div>
+
+	<!-- message input and button -->
+	<input type="text" id="message-input">
+	<button id="send-btn">Send</button>
+
+	<!-- just a few linebreaks to space things out -->
 	<br>
 	<br>
 	<br>
 
-    <select id="query-dropdown">
-        <option value="1">Test query 1</option>
-        <option value="2">Test query 2</option>
-        <option value="3">Test query 3</option>
-    </select>
-    <button id="populate-btn">Populate Message</button>
+	<!-- dropdown for test queries -->
+	<select id="query-dropdown">
+		<option value="1">Test query 1</option>
+		<option value="2">Test query 2</option>
+		<option value="3">Test query 3</option>
+	</select>
+	<button id="populate-btn">Populate Message</button>
 
-    <script>
-        var socket = io.connect('http://' + document.domain + ':' + location.port);
-        var messageContainer = document.getElementById('message-container');
-        var messageInput = document.getElementById('message-input');
-        var sendButton = document.getElementById('send-btn');
-        var populateButton = document.getElementById('populate-btn');
-        var queryDropdown = document.getElementById('query-dropdown');
+	<!-- just a few linebreaks to space things out -->
+	<br>
+	<br>
+	<br>
 
-        socket.on('message', function(data) {
-            var messageDiv = document.createElement('div');
-            messageDiv.textContent = data;
-            messageContainer.appendChild(messageDiv);
-        });
+	<!-- reset button -->
+	<button id="reset-btn">Reset</button>
 
-        sendButton.addEventListener('click', function() {
-            var message = messageInput.value;
-            socket.emit('message', message);
-            messageInput.value = '';
-        });
+	<script>
 
-        populateButton.addEventListener('click', function() {
-            var selectedOption = queryDropdown.options[queryDropdown.selectedIndex].value;
-            switch(selectedOption) {
-                case '1':
-                    messageInput.value = "I want to take a return train to Manchester Airport from Diss at 10:15 PM on Sunday with one adult and 1 child";
-                    break;
-                case '2':
-                    messageInput.value = "I want to get a train at Manchester Airport and arrive at Diss at 10:00 on Sunday";
-                    break;
-                case '3':
-                    messageInput.value = "They'll break my legs if I don't leave Norwich tonight, get me to Diss";
-                    break;
-                default:
-                    messageInput.value = "";
-                    break;
-            }
-        });
-    </script>
+		// connect to socket.io!
+		var socket = io.connect('http://' + document.domain + ':' + location.port);
+
+		// get some of the html elements
+		var messageContainer = document.getElementById('message-container');
+		var messageInput = document.getElementById('message-input');
+		var sendButton = document.getElementById('send-btn');
+		var resetButton = document.getElementById('reset-btn');
+		var populateButton = document.getElementById('populate-btn');
+		var queryDropdown = document.getElementById('query-dropdown');
+
+		// when the chat is over
+		socket.on('end', function(data) {
+
+			// disable the chatbox
+			messageInput.disabled = true;
+			sendButton.disabled = true;
+		});
+
+		// messages sent by the bot
+		socket.on('botMessage', function(data) {
+
+			// replace long url with hyperlink
+			data = replaceURLsWithHyperlinks(data);
+
+			// add the message to the page!
+			var messageP = document.createElement('p');
+			messageP.innerHTML = data;
+			messageP.style.color = 'red'; 
+			messageContainer.appendChild(messageP);
+		});
+
+		// messages sent by the user
+		socket.on('userMessage', function(data) {
+			// add the message to the page!
+			var messageP = document.createElement('p');
+			messageP.innerHTML = data;
+			messageP.style.color = 'green'; 
+			messageContainer.appendChild(messageP);
+		});
+
+		// when the send message button is clicked
+		sendButton.addEventListener('click', function() {
+			var message = messageInput.value;
+			socket.emit('userMessage', message);
+			messageInput.value = '';
+		});
+
+		// when the reset button is clicked
+		resetButton.addEventListener('click', function() {
+
+			// clear the message container
+			messageContainer.innerHTML = '';
+
+			// send the reset event
+			socket.emit('reset');
+
+			// make sure the chatbox is enabled
+			messageInput.disabled = false;
+			sendButton.disabled = false;
+		});
+
+		// replace the url in a string with a hyperlink
+		function replaceURLsWithHyperlinks(text) {
+			return text.replace(/(https?:\/\/[^\s]+)/g, function(url) {
+				return '<a href="' + url + '" target="_blank">click here</a>';
+			});
+		}
+
+		// when the populate test query button is clicked
+		populateButton.addEventListener('click', function() {
+
+			// get the test query the user selected
+			var selectedOption = queryDropdown.options[queryDropdown.selectedIndex].value;
+
+			// switch case for all of the test queries
+			switch(selectedOption) {
+				case '1':
+					messageInput.value = "I want to take a return train to Manchester Airport from Diss at 10:15 PM on Sunday with one adult and 1 child";
+					break;
+				case '2':
+					messageInput.value = "I want to get a train at Manchester Airport and arrive at Diss at 10:00 on Sunday";
+					break;
+				case '3':
+					messageInput.value = "They'll break my legs if I don't leave Norwich tonight, get me to Diss";
+					break;
+				default:
+					messageInput.value = "";
+					break;
+			}
+		});
+	</script>
 </body>
 </html>
 
